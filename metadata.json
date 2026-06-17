@@ -1,0 +1,6 @@
+{
+  "name": "Personal Budgeting & Financial Advisor",
+  "description": "Put your financial condition, sync mock banks or upload statements, get personalized budgeting advice, savings goals tracking, and investment suggestions side by side, powered by Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
