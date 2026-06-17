@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
+import * as pdfParseModule from "pdf-parse";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 
@@ -8,9 +9,11 @@ dotenv.config();
 
 const app = express();
 const PORT = 3000;
+const pdfParse = (pdfParseModule as any).default || pdfParseModule;
 
 // Body parsing middleware
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Initialize Gemini Client safely
 // Set User-Agent as 'aistudio-build' to conform to best practices
@@ -304,6 +307,29 @@ Provide your response in valid JSON format conforming to the expected responseSc
   }
 });
 
+async function extractTextFromUploadedFile(fileData: { base64?: string; mimeType?: string } | null): Promise<string> {
+  if (!fileData?.base64) return "";
+
+  const buffer = Buffer.from(fileData.base64, "base64");
+  const mimeType = fileData.mimeType || "";
+
+  if (/pdf/i.test(mimeType)) {
+    try {
+      const parsed = await pdfParse(buffer);
+      return parsed?.text || "";
+    } catch (error) {
+      console.warn("PDF text extraction failed:", error);
+    }
+  }
+
+  try {
+    return buffer.toString("utf8");
+  } catch (error) {
+    console.warn("File text decoding failed:", error);
+    return "";
+  }
+}
+
 function parseStatementCSVFallback(statementText: string): any[] {
   const lines = (statementText || "").split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   if (lines.length === 0) return [];
@@ -551,7 +577,25 @@ app.post("/api/analyze-statement", async (req, res) => {
     }
 
     if (!apiKey) {
-      // Simulate real-time categorizations on the bank file
+      const rawText = typeof statementText === "string" ? statementText : "";
+      if (rawText.trim()) {
+        const fallbackTransactions = parseStatementCSVFallback(rawText);
+        if (fallbackTransactions.length > 0) {
+          return res.json(fallbackTransactions);
+        }
+      }
+
+      if (fileData?.base64) {
+        const extractedText = await extractTextFromUploadedFile(fileData);
+        if (extractedText.trim()) {
+          const fallbackTransactions = parseStatementCSVFallback(extractedText);
+          if (fallbackTransactions.length > 0) {
+            return res.json(fallbackTransactions);
+          }
+        }
+      }
+
+      // Fallback to a safe sample set if the file content can't be parsed locally.
       console.log("No API key. Satisfying statement parse with sample rows.");
       return res.json([
         { date: "2026-06-12", description: "AMAZON.COM ELECTRONICS REQ", amount: 154.20, type: "expense", category: "Shopping" },

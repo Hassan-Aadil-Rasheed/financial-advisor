@@ -395,10 +395,17 @@ export default function StatementUpload({ onUploadSuccess }: StatementUploadProp
       });
 
       if (!response.ok) {
-        throw new Error("Server responded with error code");
+        const errorText = await response.text();
+        throw new Error(errorText || "Server responded with error code");
       }
 
-      const data = await response.json();
+      const rawText = await response.text();
+      let data;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        throw new Error("Server returned a non-JSON response");
+      }
       
       if (Array.isArray(data) && data.length > 0) {
         const mapped: Transaction[] = data.map((item: any, index: number) => ({
