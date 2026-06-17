@@ -330,6 +330,32 @@ async function extractTextFromUploadedFile(fileData: { base64?: string; mimeType
   }
 }
 
+async function tryLocalStatementParsing(
+  statementText: string | undefined,
+  fileData: { base64?: string; mimeType?: string } | null
+): Promise<any[] | null> {
+  const rawText = typeof statementText === "string" ? statementText : "";
+
+  if (rawText.trim()) {
+    const fallbackTransactions = parseStatementCSVFallback(rawText);
+    if (fallbackTransactions.length > 0) {
+      return fallbackTransactions;
+    }
+  }
+
+  if (fileData?.base64) {
+    const extractedText = await extractTextFromUploadedFile(fileData);
+    if (extractedText.trim()) {
+      const fallbackTransactions = parseStatementCSVFallback(extractedText);
+      if (fallbackTransactions.length > 0) {
+        return fallbackTransactions;
+      }
+    }
+  }
+
+  return null;
+}
+
 function parseStatementCSVFallback(statementText: string): any[] {
   const lines = (statementText || "").split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   if (lines.length === 0) return [];
@@ -577,22 +603,9 @@ app.post("/api/analyze-statement", async (req, res) => {
     }
 
     if (!apiKey) {
-      const rawText = typeof statementText === "string" ? statementText : "";
-      if (rawText.trim()) {
-        const fallbackTransactions = parseStatementCSVFallback(rawText);
-        if (fallbackTransactions.length > 0) {
-          return res.json(fallbackTransactions);
-        }
-      }
-
-      if (fileData?.base64) {
-        const extractedText = await extractTextFromUploadedFile(fileData);
-        if (extractedText.trim()) {
-          const fallbackTransactions = parseStatementCSVFallback(extractedText);
-          if (fallbackTransactions.length > 0) {
-            return res.json(fallbackTransactions);
-          }
-        }
+      const fallbackTransactions = await tryLocalStatementParsing(statementText, fileData);
+      if (fallbackTransactions) {
+        return res.json(fallbackTransactions);
       }
 
       // Fallback to a safe sample set if the file content can't be parsed locally.
@@ -670,11 +683,9 @@ ${statementText ? `Statement Text: ${statementText}` : "Statement scanned from u
   } catch (error: any) {
     console.warn("Notice: Bank statement analyzer activated robust local table / regex parser.");
     try {
-      if (statementText) {
-        const fallbackTransactions = parseStatementCSVFallback(statementText);
-        if (fallbackTransactions && fallbackTransactions.length > 0) {
-          return res.json(fallbackTransactions);
-        }
+      const fallbackTransactions = await tryLocalStatementParsing(statementText, fileData);
+      if (fallbackTransactions && fallbackTransactions.length > 0) {
+        return res.json(fallbackTransactions);
       }
     } catch {
       // ignore inner parse errors
