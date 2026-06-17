@@ -314,7 +314,7 @@ async function extractTextFromUploadedFile(fileData: { base64?: string; mimeType
 
   if (/pdf/i.test(mimeType)) {
     try {
-      const parser = new PDFParse({ data: buffer, verbosity: 0 });
+      const parser = new PDFParse({ data: buffer, verbosity: 0, disableWorker: true });
       const parsed = await parser.getText();
       await parser.destroy();
       return parsed?.text || "";
