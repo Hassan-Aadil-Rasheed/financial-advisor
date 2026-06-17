@@ -92,10 +92,30 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(profile),
       });
-      const data = await response.json();
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(text || `Request failed with status ${response.status}`);
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      const rawText = await response.text();
+      if (!rawText) {
+        throw new Error("Empty response body");
+      }
+
+      const data = contentType.includes("application/json")
+        ? JSON.parse(rawText)
+        : JSON.parse(rawText);
+
+      if (!data || typeof data !== "object") {
+        throw new Error("Invalid response payload");
+      }
+
       setAdvice(data);
     } catch (err) {
       console.error("Failed to connect with budget calculation daemon:", err);
+      setAdvice(null);
     } finally {
       setIsAdviceLoading(false);
     }
