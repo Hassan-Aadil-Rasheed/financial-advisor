@@ -337,6 +337,11 @@ async function tryLocalStatementParsing(
   const rawText = typeof statementText === "string" ? statementText : "";
 
   if (rawText.trim()) {
+    const textFallbackTransactions = parseTextStatementFallback(rawText);
+    if (textFallbackTransactions.length > 0) {
+      return textFallbackTransactions;
+    }
+
     const fallbackTransactions = parseStatementCSVFallback(rawText);
     if (fallbackTransactions.length > 0) {
       return fallbackTransactions;
@@ -346,6 +351,11 @@ async function tryLocalStatementParsing(
   if (fileData?.base64) {
     const extractedText = await extractTextFromUploadedFile(fileData);
     if (extractedText.trim()) {
+      const textFallbackTransactions = parseTextStatementFallback(extractedText);
+      if (textFallbackTransactions.length > 0) {
+        return textFallbackTransactions;
+      }
+
       const fallbackTransactions = parseStatementCSVFallback(extractedText);
       if (fallbackTransactions.length > 0) {
         return fallbackTransactions;
@@ -592,6 +602,91 @@ function parseStatementCSVFallback(statementText: string): any[] {
     });
   }
   return transactions;
+}
+
+function parseTextStatementFallback(statementText: string): any[] {
+  const lines = (statementText || '').split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length === 0) return [];
+
+  const results: any[] = [];
+  const datePattern = /(\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b)/g;
+
+  const normalizeDate = (value: string) => {
+    const normalized = value.replace(/\//g, '-');
+    const parts = normalized.split('-');
+    if (parts.length !== 3) return value;
+    const [first, second, third] = parts;
+    if (/^\d{4}$/.test(first)) {
+      return `${first}-${second.padStart(2, '0')}-${third.padStart(2, '0')}`;
+    }
+    const year = third.length === 2 ? `20${third}` : third;
+    return `${year}-${first.padStart(2, '0')}-${second.padStart(2, '0')}`;
+  };
+
+  const normalizeAmount = (raw: string) => {
+    const cleaned = raw.replace(/[$€£¥,\s]/g, '').replace(/[()]/g, '');
+    if (!cleaned) return NaN;
+    const sign = cleaned.startsWith('-') || cleaned.startsWith('+') ? cleaned[0] : '';
+    const digits = cleaned.replace(/^[+-]/, '');
+    const parsed = parseFloat(digits);
+    if (isNaN(parsed)) return NaN;
+    return sign === '-' ? -parsed : parsed;
+  };
+
+  lines.forEach((line, index) => {
+    const cleanLine = line.replace(/\s+/g, ' ').trim();
+    if (!cleanLine) return;
+
+    const dateMatches = [...cleanLine.matchAll(datePattern)].map(m => m[0]);
+    if (dateMatches.length === 0) return;
+
+    const dateText = dateMatches[0];
+    const withoutDate = cleanLine.replace(dateText, ' ').replace(/\s+/g, ' ').trim();
+
+    const amountRegex = /(?:^|[\s,;|])([-+]?[$€£¥]?\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)(?=$|[\s,;|])/g;
+    const amountCandidates = [...withoutDate.matchAll(amountRegex)]
+      .map(match => normalizeAmount(match[1]))
+      .filter(value => !isNaN(value) && value !== 0);
+
+    if (amountCandidates.length === 0) return;
+
+    const amountValue = amountCandidates[0];
+    const description = withoutDate
+      .replace(amountRegex, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[|:-]+/g, ' ')
+      .trim() || `Transaction ${index + 1}`;
+
+    const descLower = description.toLowerCase();
+    const isIncome = /salary|deposit|refund|credit|payroll|payout|income|direct deposit|received|cashback/i.test(descLower) || /deposit|credit|income|salary|refund/i.test(withoutDate);
+    const type = isIncome || amountValue > 0 ? 'income' : 'expense';
+
+    const category = type === 'income'
+      ? 'Savings'
+      : /rent|mortgage|apartment|housing|lease|landlord/i.test(descLower)
+        ? 'Housing'
+        : /electric|gas|water|internet|phone|utility|subscription|netflix|insurance|bill|gym/i.test(descLower)
+          ? 'Utilities & Bills'
+          : /grocery|market|costco|kroger|safeway|whole foods|food|supermarket/i.test(descLower)
+            ? 'Food & Groceries'
+            : /restaurant|cafe|coffee|starbucks|dining|movie|cinema|bar|pizza|sushi|lunch|dinner|entertainment/i.test(descLower)
+              ? 'Entertainment & Dining'
+              : /uber|gas|fuel|transit|taxi|lyft|parking|commute|train|bus/i.test(descLower)
+                ? 'Transportation'
+                : /amazon|shop|store|clothes|retail|electronics|target|walmart|best buy/i.test(descLower)
+                  ? 'Shopping'
+                  : 'Other';
+
+    results.push({
+      date: normalizeDate(dateText),
+      description,
+      amount: Math.abs(amountValue),
+      type,
+      category
+    });
+  });
+
+  return results;
 }
 
 // 2. POST /api/analyze-statement
