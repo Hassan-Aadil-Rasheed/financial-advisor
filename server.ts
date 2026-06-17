@@ -1,15 +1,14 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
-import * as pdfParseModule from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
-const pdfParse = (pdfParseModule as any).default || pdfParseModule;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Body parsing middleware
 app.use(express.json({ limit: "50mb" }));
@@ -315,7 +314,9 @@ async function extractTextFromUploadedFile(fileData: { base64?: string; mimeType
 
   if (/pdf/i.test(mimeType)) {
     try {
-      const parsed = await pdfParse(buffer);
+      const parser = new PDFParse({ data: buffer, verbosity: 0 });
+      const parsed = await parser.getText();
+      await parser.destroy();
       return parsed?.text || "";
     } catch (error) {
       console.warn("PDF text extraction failed:", error);
@@ -633,6 +634,8 @@ function parseTextStatementFallback(statementText: string): any[] {
     return sign === '-' ? -parsed : parsed;
   };
 
+  const amountRegex = /[-+]?(?:[$€£¥]\s?)?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/g;
+
   lines.forEach((line, index) => {
     const cleanLine = line.replace(/\s+/g, ' ').trim();
     if (!cleanLine) return;
@@ -643,23 +646,24 @@ function parseTextStatementFallback(statementText: string): any[] {
     const dateText = dateMatches[0];
     const withoutDate = cleanLine.replace(dateText, ' ').replace(/\s+/g, ' ').trim();
 
-    const amountRegex = /(?:^|[\s,;|])([-+]?[$€£¥]?\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)(?=$|[\s,;|])/g;
     const amountCandidates = [...withoutDate.matchAll(amountRegex)]
-      .map(match => normalizeAmount(match[1]))
+      .map(match => normalizeAmount(match[0]))
       .filter(value => !isNaN(value) && value !== 0);
 
     if (amountCandidates.length === 0) return;
 
-    const amountValue = amountCandidates[0];
+    const amountValue = Math.abs(amountCandidates[0]);
     const description = withoutDate
       .replace(amountRegex, ' ')
       .replace(/\s+/g, ' ')
       .replace(/[|:-]+/g, ' ')
+      .replace(/\b(?:debit|credit|balance)\b/gi, ' ')
       .trim() || `Transaction ${index + 1}`;
 
     const descLower = description.toLowerCase();
-    const isIncome = /salary|deposit|refund|credit|payroll|payout|income|direct deposit|received|cashback/i.test(descLower) || /deposit|credit|income|salary|refund/i.test(withoutDate);
-    const type = isIncome || amountValue > 0 ? 'income' : 'expense';
+    const isIncome = /salary|deposit|refund|payroll|payout|income|direct deposit|received|cashback|interest credit|credit/i.test(descLower)
+      || /deposit|credit|income|salary|refund|payroll|payout|received/i.test(withoutDate);
+    const type = isIncome ? 'income' : 'expense';
 
     const category = type === 'income'
       ? 'Savings'
@@ -680,7 +684,7 @@ function parseTextStatementFallback(statementText: string): any[] {
     results.push({
       date: normalizeDate(dateText),
       description,
-      amount: Math.abs(amountValue),
+      amount: amountValue,
       type,
       category
     });
